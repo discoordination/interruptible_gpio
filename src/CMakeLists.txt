@@ -5,6 +5,7 @@ add_library(	${lib_name}
 				responder.cpp
 				event.cpp
 				eventDispatcher.cpp
+				../include/dbgEnable.hpp
 				../include/gpio.hpp
 				../include/interruptible_gpio.hpp
 				../include/event.hpp

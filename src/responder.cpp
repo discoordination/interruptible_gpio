@@ -1,11 +1,5 @@
 #include "responder.hpp"
 
-namespace GPIO {
-
-// Responder
-//Event::Responder* Event::Responder::setNextResponder(Responder* responder) {
-//	this->nextResponder = responder;
-//	return responder;
-//}
-
+namespace GPIO::Event {
+	std::set<std::size_t> UniqueID::ids{};
 }

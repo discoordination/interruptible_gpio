@@ -2,7 +2,8 @@
 #define __RESPONDER_HPP_
 
 #include "event.hpp"
-
+#include <set>
+#include <limits>
 
 class BaseEvent;
 
@@ -14,14 +15,40 @@ class BaseEvent;
 namespace GPIO {
 namespace Event {
 
-class Responder {
+// Unique_id
+class UniqueID {
+
+public:
+	const std::size_t id;
 
 protected:
-	Responder* nextResponder = nullptr;
+	UniqueID() : id(UniqueID::getNextID()) {}
+	~UniqueID() { ids.erase(id); };
+
+private:
+	static std::size_t getNextID() { 		
+		for (std::size_t i = 1; i < std::numeric_limits<std::size_t>::max(); ++i) {
+			auto elem = ids.find(i);
+			if(elem == std::end(ids)) { 
+				ids.insert(i);
+				return i;
+			}
+		}
+	#ifdef IG_DEBUG
+		std::cout << "Crashing due to too many items.\n";
+		std::exit(EXIT_FAILURE);
+	#endif
+		return -1; // Impossible and can never get here.
+	}
+	static std::set<std::size_t> ids;
+};
+
+
+
+class Responder : public UniqueID {
+
 public:
 	virtual ~Responder() = default;
-	// setNextResponder was virtual
-//	Responder* setNextResponder(Responder*);
 	virtual void respondToGPIOInterrupt(BaseEvent& event) = 0;
 };
 

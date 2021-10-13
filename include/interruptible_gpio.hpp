@@ -2,6 +2,5 @@
 #define __INTERRUPTIBLE_GPIO_
 
 #include "gpio.hpp"
-#include "eventDispatcher.hpp"
 
 #endif // __INTERRUPTIBLE_GPIO_

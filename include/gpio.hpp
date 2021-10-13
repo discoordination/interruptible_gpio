@@ -15,7 +15,6 @@
 // GPIOs create an event and send it to the dispatcher which queues it before sending
 // it to the subscriber.
 
-// Add method to legitimately swap things out.  ???????????
 
 namespace Pico {
 	inline constexpr bool OUT = true;
@@ -24,14 +23,20 @@ namespace Pico {
 
 class Responder;
 
-
 namespace GPIO {
 
+/**
+ * Base Class for Interruptible GPIOs
+ */
 class InterruptibleGPIO {
 	
-// This is a static map of the GPIOs which contains all used GPIOs.
-	inline static std::map<uint, InterruptibleGPIO*> InterruptibleGPIOs;
-	virtual void triggered(uint gpio, uint32_t events) = 0;
+public:
+	constexpr uint8_t getPin() const { return pin; }
+	
+	/**
+	 * Handle the interrupt by calling triggered on the gpio that matches the pin.
+	 */
+	static void gpioInterruptHandler(uint gpio, uint32_t events);
 
 protected:
 	const uint8_t pin;
@@ -44,11 +49,9 @@ protected:
 	InterruptibleGPIO(InterruptibleGPIO&&) = delete; // move constructor;
 	InterruptibleGPIO& operator=(InterruptibleGPIO&& other) = delete; // move assignment;
 
-public:
-	constexpr uint8_t getPin() const { return pin; }
-	
-	static int64_t reenableGPIOCallback(alarm_id_t id, void* userData);
-	static void gpioInterruptHandler(uint gpio, uint32_t events);
+// This is a static map of the GPIOs which contains all used GPIOs.
+	inline static std::map<uint8_t, InterruptibleGPIO*> InterruptibleGPIOs;
+	virtual void triggered(uint gpio, uint32_t events) = 0;
 };
 
 
@@ -61,26 +64,32 @@ class PushButtonGPIO : public InterruptibleGPIO {
 public:
 	enum class ButtonState { NotPressed, Pressed };
 
+	PushButtonGPIO(const uint8_t pin, PushButtonBase* parent, uint debounceMS);
+	void triggered(uint gpio, uint32_t events) override;
+	
+	ButtonState buttonState;
+
 private:
 	PushButtonBase* parent;
-	uint debounceMS;
+	const std::size_t debounceMS;
 	repeating_timer t;
 	uint count;
 
 	static bool debounceTimerCallback(repeating_timer_t *t);
-
-public:
-	PushButtonGPIO(const uint8_t pin, PushButtonBase* parent, uint debounceMS);
-	ButtonState buttonState;
-	void triggered(uint gpio, uint32_t events) override;
 };
 
 
 
 class PushButtonBase {
+	
 public:
 	virtual void buttonUp() = 0;
 	virtual void buttonDown() = 0;
+
+	virtual std::size_t getButtonDownEventID() const = 0;
+	virtual std::size_t getButtonUpEventID() const = 0;
+	virtual std::size_t getButtonLPEventID() const = 0;
+
 protected:
 	virtual ~PushButtonBase() = default;
 };
@@ -97,17 +106,39 @@ private:
 	alarm_id_t longPressAlarmID;
 	static int64_t longPressCallback(alarm_id_t id, void* userData);
 public:
+	using ButtonDownEventType = Event::ButtonDown<Pin>;
+	using ButtonUpEventType = Event::ButtonUp<Pin>;
+	using ButtonLPEventType = Event::ButtonLongPress<Pin>;
+
 	PushButton(uint longPressTime = 1500, uint debounceMS = 5);
 
 	void buttonUp();
 	void buttonDown();
+
+	std::size_t getButtonDownEventID() const override { 
+		return EventID::value<ButtonDownEventType>();
+	}
+	std::size_t getButtonUpEventID() const override { 
+		return EventID::value<ButtonUpEventType>(); 
+	}
+	std::size_t getButtonLPEventID() const override {
+		return EventID::value<ButtonLPEventType>(); 
+	}
 };
 
 
 
 class RotaryEncoderBase {
+	
 public:
 	virtual void triggered(uint gpio, uint32_t events) = 0;
+
+	virtual std::size_t getButtonDownEventID() const = 0;
+	virtual std::size_t getButtonUpEventID() const = 0;
+	virtual std::size_t getEncoderCEventID() const = 0;
+	virtual std::size_t getEncoderCCEventID() const = 0;
+	virtual std::size_t getButtonLPEventID() const = 0;
+
 protected:
 	virtual ~RotaryEncoderBase() = default;
 };
@@ -125,7 +156,7 @@ public:
 
 
 template <uint8_t Pin1, uint8_t Pin2, uint8_t ButtonPin = 255>
-class RotaryEncoder : RotaryEncoderBase {
+class RotaryEncoder : public RotaryEncoderBase {
 
 public:
 	RotaryEncoder();
@@ -137,6 +168,22 @@ public:
 	using ButtonDownEventType = Event::ButtonDown<ButtonPin>;
 	using ButtonUpEventType = Event::ButtonUp<ButtonPin>;
 	using ButtonLPEventType = Event::ButtonLongPress<ButtonPin>;
+
+	std::size_t getButtonDownEventID() const override {
+		return EventID::value<ButtonDownEventType>();
+	}
+	std::size_t getButtonUpEventID() const override {
+		return EventID::value<ButtonUpEventType>();
+	}
+	std::size_t getEncoderCEventID() const override {
+		return EventID::value<CEventType>();
+	}
+	std::size_t getEncoderCCEventID() const override {
+		return EventID::value<CCEventType>();
+	}
+	std::size_t getButtonLPEventID() const override {
+		return EventID::value<ButtonLPEventType>();
+	}
 
 	constexpr static std::pair<const uint8_t, const uint8_t> getRotaryPins() { return {Pin1, Pin2 }; }
 	constexpr static uint8_t getButtonPin() { return ButtonPin; }
@@ -164,18 +211,15 @@ PushButton<Pin>::PushButton(uint longPressTime, uint debounceMS) :
 
 template<uint8_t Pin>
 void PushButton<Pin>::buttonUp() {
-
 	cancel_alarm(longPressAlarmID);
-
 	Event::Dispatcher::get().dispatch( std::make_unique<Event::ButtonUp<Pin>>() );
 }
 
 
 template <uint8_t Pin>
 void PushButton<Pin>::buttonDown() {
-	
+	volatile int i = 1;
 	longPressAlarmID = add_alarm_in_ms(longPressTime, &longPressCallback, this, true);
-
 	Event::Dispatcher::get().dispatch( std::make_unique<Event::ButtonDown<Pin>>() );
 }
 
@@ -184,7 +228,6 @@ void PushButton<Pin>::buttonDown() {
  */
 template <uint8_t Pin>
 int64_t PushButton<Pin>::longPressCallback(alarm_id_t id, void* userData) {
-
 	Event::Dispatcher::get().dispatch( std::make_unique<Event::ButtonLongPress<Pin>>() );
 	return 0;
 }
@@ -230,7 +273,7 @@ template <uint8_t Pin1, uint8_t Pin2, uint8_t ButtonPin>
 RotaryEncoder<Pin1, Pin2, ButtonPin>::RotaryEncoder() : 
 				p1(Pin1, this),
 				p2(Pin2, this),
-				button(ButtonPin),
+				button(),
 				state(R_START)
 {}
 

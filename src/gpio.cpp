@@ -8,7 +8,6 @@ namespace GPIO {
 // InterruptibleGPIO
 
 InterruptibleGPIO::InterruptibleGPIO(const uint8_t pin) : 
-										//enabled(true),
 										pin(pin) {
 	assert(pin < 30 && "GPIO pin out of range.  RP2040 has only 30 GPIOs");
 	InterruptibleGPIOs[pin] = this;
@@ -25,34 +24,27 @@ InterruptibleGPIO& InterruptibleGPIO::operator=(const InterruptibleGPIO& other) 
 
 InterruptibleGPIO::InterruptibleGPIO(const InterruptibleGPIO& other) : InterruptibleGPIO(other.pin) {
 	std::cout << "Called copy constructor" << std::endl;
-	assert(1 && "This should not be called.");
-	//enabled = true; //this->target = other.target;
+	assert(1 && "This should not be called.");;
 }
 
 
 void InterruptibleGPIO::gpioInterruptHandler(uint gpio, uint32_t events) {
-
-	for (auto it = InterruptibleGPIOs.begin(); it != InterruptibleGPIOs.end(); ++it) {
-		auto& InterruptibleGPIO = it->second;
-		if (gpio == InterruptibleGPIO->pin) {
-			InterruptibleGPIO->triggered(gpio, events);
-		}
- 	}
+	const auto& t = InterruptibleGPIOs.find(gpio);
+	if (t != std::end(InterruptibleGPIOs))
+		t->second->triggered(gpio, events);
 }
 
 
-//constexpr uint8_t InterruptibleGPIO::getPin() const { return this->pin; }
-
 
 // PushButtonGPIO
-PushButtonGPIO::PushButtonGPIO(const uint8_t pin, PushButtonBase* parent, uint debounceMS) : 
+PushButtonGPIO::PushButtonGPIO(const uint8_t pin, PushButtonBase* parent, const std::size_t debounceMS) : 
 		InterruptibleGPIO(pin),
+		buttonState(ButtonState::NotPressed),
 		parent(parent),
 		debounceMS(debounceMS),
 		t(),
-		count(0),
-		buttonState(ButtonState::NotPressed) {
-
+		count(0) 
+{
 	gpio_set_irq_enabled_with_callback(pin, GPIO_IRQ_EDGE_FALL, true, &InterruptibleGPIO::gpioInterruptHandler);
 	gpio_set_irq_enabled(pin, GPIO_IRQ_EDGE_RISE, false);
 }
@@ -114,6 +106,7 @@ void PushButtonGPIO::triggered(uint gpio, uint32_t events) {
 	else if (events == GPIO_IRQ_EDGE_RISE)
 		buttonState = ButtonState::NotPressed;
 	
+	// Called every ms and then the gpio keeps count of the number of calls until debounceMS time.
 	add_repeating_timer_ms(1, debounceTimerCallback, this, &t);
 }
 
@@ -129,7 +122,5 @@ RotaryEncoderEncoderGPIO::RotaryEncoderEncoderGPIO(uint8_t pin, RotaryEncoderBas
 void RotaryEncoderEncoderGPIO::triggered(uint gpio, uint32_t events) { 
 	parent->triggered(gpio, events); 
 }
-
-
 
 } // namespace GPIO
