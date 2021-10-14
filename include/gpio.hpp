@@ -25,17 +25,35 @@ class Responder;
 
 namespace GPIO {
 
+
+/**
+ * Abstract base class containing virtual functions and static map of all interrupts.
+ */
 class InterruptibleGPIOBase{
 
 public:
+	
 	virtual void triggered(uint gpio, uint32_t events) = 0;
+	
 	/**
 	 * Handle the interrupt by calling triggered on the gpio that matches the pin.
 	 */
 	static void gpioInterruptHandler(uint gpio, uint32_t events);
+
+	/**
+ 	 *  This is a static map of the GPIOs which contains all used GPIOs.
+ 	 */
 	static inline std::map<uint8_t, InterruptibleGPIOBase*> InterruptibleGPIOs;
+
 protected:
+
+	InterruptibleGPIOBase() = default;
 	virtual ~InterruptibleGPIOBase() = default;
+
+	InterruptibleGPIOBase(InterruptibleGPIOBase&&) = delete; // move constructor;
+	InterruptibleGPIOBase& operator=(InterruptibleGPIOBase&&) = delete; // move assignment;
+	InterruptibleGPIOBase(InterruptibleGPIOBase const&) = delete; // copy constructor;
+	InterruptibleGPIOBase& operator=(const InterruptibleGPIOBase&) = delete; // copy assignment;
 };
 
 
@@ -54,12 +72,6 @@ protected:
 	InterruptibleGPIO();
 	~InterruptibleGPIO() { InterruptibleGPIOs.erase(Pin); };
 
-	InterruptibleGPIO(const InterruptibleGPIO&); // copy constructor;
-	InterruptibleGPIO& operator=(const InterruptibleGPIO& other); // copy assignment;
-	InterruptibleGPIO(InterruptibleGPIO&&) = delete; // move constructor;
-	InterruptibleGPIO& operator=(InterruptibleGPIO&& other) = delete; // move assignment;
-
-// This is a static map of the GPIOs which contains all used GPIOs.
 };
 
 
@@ -209,32 +221,13 @@ private:
 
 
 
-
-
 // InterruptibleGPIO
-
 template <uint8_t Pin>
 InterruptibleGPIO<Pin>::InterruptibleGPIO() {
 	static_assert(Pin < 30, "GPIO pin out of range.  RP2040 has only 30 GPIOs");
 	InterruptibleGPIOs[Pin] = this;
 	gpio_set_dir(Pin, Pico::IN);
 }
-
-
-template <uint8_t Pin>
-InterruptibleGPIO<Pin>& InterruptibleGPIO<Pin>::operator=(const InterruptibleGPIO<Pin>& other) {
-	std::cout << "Called copy assignment operator" << std::endl;
-	static_assert(true, "This should not be called.");
-	return *this;
-}
-
-
-template <uint8_t Pin>
-InterruptibleGPIO<Pin>::InterruptibleGPIO(const InterruptibleGPIO<Pin>& other) {
-	std::cout << "Called copy constructor" << std::endl;
-	static_assert(true, "This should not be called.");;
-}
-
 
 
 

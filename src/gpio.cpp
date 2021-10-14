@@ -5,7 +5,6 @@
 
 namespace GPIO {
 
-
 // InterruptibleGPIOBase
 
 void InterruptibleGPIOBase::gpioInterruptHandler(uint gpio, uint32_t events) {
