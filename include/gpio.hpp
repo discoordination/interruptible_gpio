@@ -25,24 +25,34 @@ class Responder;
 
 namespace GPIO {
 
-/**
- * Base Class for Interruptible GPIOs
- */
-class InterruptibleGPIO {
-	
+class InterruptibleGPIOBase{
+
 public:
-	constexpr uint8_t getPin() const { return pin; }
-	
+	virtual void triggered(uint gpio, uint32_t events) = 0;
 	/**
 	 * Handle the interrupt by calling triggered on the gpio that matches the pin.
 	 */
 	static void gpioInterruptHandler(uint gpio, uint32_t events);
+	static inline std::map<uint8_t, InterruptibleGPIOBase*> InterruptibleGPIOs;
+protected:
+	virtual ~InterruptibleGPIOBase() = default;
+};
+
+
+
+
+/**
+ * Base Class for Interruptible GPIOs
+ */
+template <uint8_t Pin>
+class InterruptibleGPIO : public InterruptibleGPIOBase {
+	
+public:
+	static constexpr uint8_t getPin() { return Pin; }
 
 protected:
-	const uint8_t pin;
-
-	InterruptibleGPIO(const uint8_t pin);
-	~InterruptibleGPIO() { InterruptibleGPIOs.erase(pin); };
+	InterruptibleGPIO();
+	~InterruptibleGPIO() { InterruptibleGPIOs.erase(Pin); };
 
 	InterruptibleGPIO(const InterruptibleGPIO&); // copy constructor;
 	InterruptibleGPIO& operator=(const InterruptibleGPIO& other); // copy assignment;
@@ -50,21 +60,19 @@ protected:
 	InterruptibleGPIO& operator=(InterruptibleGPIO&& other) = delete; // move assignment;
 
 // This is a static map of the GPIOs which contains all used GPIOs.
-	inline static std::map<uint8_t, InterruptibleGPIO*> InterruptibleGPIOs;
-	virtual void triggered(uint gpio, uint32_t events) = 0;
 };
 
 
 
 class PushButtonBase;
 
-
-class PushButtonGPIO : public InterruptibleGPIO {
+template <uint8_t Pin>
+class PushButtonGPIO : public InterruptibleGPIO<Pin> {
 
 public:
 	enum class ButtonState { NotPressed, Pressed };
 
-	PushButtonGPIO(const uint8_t pin, PushButtonBase* parent, uint debounceMS);
+	PushButtonGPIO(PushButtonBase* parent, uint debounceMS);
 	void triggered(uint gpio, uint32_t events) override;
 	
 	ButtonState buttonState;
@@ -100,7 +108,7 @@ template <uint8_t Pin>
 class PushButton : PushButtonBase {
 
 private:
-	PushButtonGPIO buttonGPIO;
+	PushButtonGPIO<Pin> buttonGPIO;
 
 	uint longPressTime;
 	alarm_id_t longPressAlarmID;
@@ -144,13 +152,13 @@ protected:
 };
 
 
-
-class RotaryEncoderEncoderGPIO : public InterruptibleGPIO {
+template <uint8_t Pin>
+class RotaryEncoderEncoderGPIO : public InterruptibleGPIO<Pin> {
 
 	RotaryEncoderBase* parent;
 	void triggered(uint gpio, uint32_t events) override;
 public:
-	RotaryEncoderEncoderGPIO(uint8_t pin, RotaryEncoderBase* parent);
+	RotaryEncoderEncoderGPIO(RotaryEncoderBase* parent);
 };
 
 
@@ -191,8 +199,8 @@ public:
 ///	const uint8_t pin1, pin2;
 
 private:
-	RotaryEncoderEncoderGPIO p1;
-	RotaryEncoderEncoderGPIO p2; 
+	RotaryEncoderEncoderGPIO<Pin1> p1;
+	RotaryEncoderEncoderGPIO<Pin2> p2; 
 	PushButton<ButtonPin> button;
 	uint8_t state;
 	void triggered(uint gpio, uint32_t events);
@@ -200,10 +208,122 @@ private:
 
 
 
+
+
+
+// InterruptibleGPIO
+
+template <uint8_t Pin>
+InterruptibleGPIO<Pin>::InterruptibleGPIO() {
+	static_assert(Pin < 30, "GPIO pin out of range.  RP2040 has only 30 GPIOs");
+	InterruptibleGPIOs[Pin] = this;
+	gpio_set_dir(Pin, Pico::IN);
+}
+
+
+template <uint8_t Pin>
+InterruptibleGPIO<Pin>& InterruptibleGPIO<Pin>::operator=(const InterruptibleGPIO<Pin>& other) {
+	std::cout << "Called copy assignment operator" << std::endl;
+	static_assert(true, "This should not be called.");
+	return *this;
+}
+
+
+template <uint8_t Pin>
+InterruptibleGPIO<Pin>::InterruptibleGPIO(const InterruptibleGPIO<Pin>& other) {
+	std::cout << "Called copy constructor" << std::endl;
+	static_assert(true, "This should not be called.");;
+}
+
+
+
+
+// PushButtonGPIO
+template <uint8_t Pin>
+PushButtonGPIO<Pin>::PushButtonGPIO(PushButtonBase* parent, const std::size_t debounceMS) : 
+		InterruptibleGPIO<Pin>(),
+		buttonState(ButtonState::NotPressed),
+		parent(parent),
+		debounceMS(debounceMS),
+		t(),
+		count{0}
+{
+	gpio_set_irq_enabled_with_callback(Pin, GPIO_IRQ_EDGE_FALL, true, &InterruptibleGPIO<Pin>::gpioInterruptHandler);
+	gpio_set_irq_enabled(Pin, GPIO_IRQ_EDGE_RISE, false);
+}
+
+
+
+template <uint8_t Pin>
+bool PushButtonGPIO<Pin>::debounceTimerCallback(repeating_timer_t* t) {
+
+	PushButtonGPIO<Pin>* gpio = static_cast<PushButtonGPIO*>(t->user_data);
+
+	if (gpio_get(gpio->getPin()) == 0 && gpio->buttonState == ButtonState::Pressed) {
+
+		if (++gpio->count == gpio->debounceMS) {
+			
+			gpio->count = 0;
+			gpio_set_irq_enabled_with_callback(gpio->getPin(), GPIO_IRQ_EDGE_RISE, true, &InterruptibleGPIOBase::gpioInterruptHandler);
+			gpio->parent->buttonDown();
+
+			return false;
+		}
+
+	} else if (gpio_get(gpio->getPin()) == 1 && gpio->buttonState == ButtonState::NotPressed) {
+		
+		if (++gpio->count == gpio->debounceMS) {
+
+			gpio->count = 0;
+			gpio_set_irq_enabled_with_callback(gpio->getPin(), GPIO_IRQ_EDGE_FALL, true, &InterruptibleGPIOBase::gpioInterruptHandler);
+			gpio->parent->buttonUp();
+
+			return false;
+		}
+
+	} else if (gpio->buttonState == ButtonState::Pressed) {
+
+		gpio->buttonState = ButtonState::NotPressed;
+		gpio_set_irq_enabled_with_callback(gpio->getPin(), GPIO_IRQ_EDGE_FALL + GPIO_IRQ_EDGE_RISE, true, &InterruptibleGPIOBase::gpioInterruptHandler);
+
+		return false;
+
+	} else {
+
+		gpio->buttonState = ButtonState::Pressed;
+		gpio_set_irq_enabled_with_callback(gpio->getPin(), GPIO_IRQ_EDGE_FALL + GPIO_IRQ_EDGE_RISE, true, &InterruptibleGPIOBase::gpioInterruptHandler);
+
+		return false;
+	}
+
+	return true;
+} 
+
+
+// tell it the button state is what it is.  turn off the interrupt and set an alarm
+template <uint8_t Pin>
+void PushButtonGPIO<Pin>::triggered(uint gpio, uint32_t events) {
+
+	gpio_set_irq_enabled(Pin, GPIO_IRQ_EDGE_FALL + GPIO_IRQ_EDGE_RISE, false);
+
+	if (events == GPIO_IRQ_EDGE_FALL) 
+		buttonState = ButtonState::Pressed;
+	else if (events == GPIO_IRQ_EDGE_RISE)
+		buttonState = ButtonState::NotPressed;
+	
+	// Called every ms and then the gpio keeps count of the number of calls until debounceMS time.
+	add_repeating_timer_ms(1, debounceTimerCallback, this, &t);
+}
+
+
+
+
+
 // PushButton
+
 template<uint8_t Pin>
 PushButton<Pin>::PushButton(uint longPressTime, uint debounceMS) :	
-			buttonGPIO(Pin, this, debounceMS),
+			buttonGPIO(this, debounceMS),
 			longPressTime{longPressTime}
 {}
 
@@ -231,6 +351,28 @@ int64_t PushButton<Pin>::longPressCallback(alarm_id_t id, void* userData) {
 	Event::Dispatcher::get().dispatch( std::make_unique<Event::ButtonLongPress<Pin>>() );
 	return 0;
 }
+
+
+
+
+
+// RotaryEncoderEncoderGPIO
+
+template<uint8_t Pin>
+RotaryEncoderEncoderGPIO<Pin>::RotaryEncoderEncoderGPIO(RotaryEncoderBase* parent) : InterruptibleGPIO<Pin>(), parent(parent) {
+
+	gpio_set_irq_enabled_with_callback(Pin, GPIO_IRQ_EDGE_FALL + GPIO_IRQ_EDGE_RISE, true, &InterruptibleGPIOBase::gpioInterruptHandler);
+}
+
+
+
+template <uint8_t Pin>
+void RotaryEncoderEncoderGPIO<Pin>::triggered(uint gpio, uint32_t events) { 
+	parent->triggered(gpio, events); 
+}
+
+
+
 
 
 namespace {
@@ -271,8 +413,8 @@ const std::array<std::array<uint8_t, 4>, 7> ttable {
 
 template <uint8_t Pin1, uint8_t Pin2, uint8_t ButtonPin>
 RotaryEncoder<Pin1, Pin2, ButtonPin>::RotaryEncoder() : 
-				p1(Pin1, this),
-				p2(Pin2, this),
+				p1(this),
+				p2(this),
 				button(),
 				state(R_START)
 {}
