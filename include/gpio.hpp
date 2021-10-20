@@ -1,14 +1,16 @@
 #ifndef _GPIO_HPP__
 #define _GPIO_HPP__
 
-
-#include "pico/stdlib.h"
+#include "pico/time.h"
+#include "hardware/gpio.h"
 #include "hardware/irq.h"
 
 #include "eventDispatcher.hpp"
 
 #include <map>		// For used GPIOs
 #include <memory>
+#include <array>
+
 
 
 // The library now uses a delayed (through an event queue) subscriber event system.
@@ -148,6 +150,62 @@ public:
 
 
 
+class RotaryEncoderBase;
+
+
+template <uint8_t Pin>
+class RotaryEncoderEncoderGPIO : public InterruptibleGPIO<Pin> {
+
+	RotaryEncoderBase* parent;
+	void triggered(uint gpio, uint32_t events) override;
+public:
+	RotaryEncoderEncoderGPIO(RotaryEncoderBase* parent);
+};
+
+
+
+struct EncoderClickTimer {
+	
+	EncoderClickTimer() : prevClickType(Action::ROTARY_ENCODER_CLOCKWISE_TICK), prevClickTime{to_ms_since_boot(get_absolute_time())} {
+		resetTimeBetweenClicks();
+	}
+
+	uint16_t getClicksPerSecond() const { 
+		uint32_t sum = 0; 
+		for (auto& click : timeBetweenClicks) sum += click;
+		return 1000 / (sum >> 3);
+	}
+
+	void addClick(Action type) {
+		
+		const auto cTime = to_ms_since_boot(get_absolute_time());
+		const auto tChange = cTime - prevClickTime;
+
+		if (tChange > 1100 || type != prevClickType) {
+			resetTimeBetweenClicks();
+			prevClickType = type;
+		}
+		
+		*inputPtr++ = tChange;
+		prevClickTime = cTime;
+		if (inputPtr == timeBetweenClicks.end()) inputPtr = timeBetweenClicks.begin();
+	}
+	
+private:
+	void resetTimeBetweenClicks() { 
+		for(auto& time : timeBetweenClicks) time = 15000;
+		inputPtr = timeBetweenClicks.begin();
+	}
+
+	std::array<uint32_t, 8> timeBetweenClicks;
+	std::array<uint32_t, 8>::iterator inputPtr;
+	
+	Action prevClickType;
+	uint32_t prevClickTime;
+};
+
+
+
 class RotaryEncoderBase {
 	
 public:
@@ -163,15 +221,6 @@ protected:
 	virtual ~RotaryEncoderBase() = default;
 };
 
-
-template <uint8_t Pin>
-class RotaryEncoderEncoderGPIO : public InterruptibleGPIO<Pin> {
-
-	RotaryEncoderBase* parent;
-	void triggered(uint gpio, uint32_t events) override;
-public:
-	RotaryEncoderEncoderGPIO(RotaryEncoderBase* parent);
-};
 
 
 
@@ -205,16 +254,28 @@ public:
 		return EventID::value<ButtonLPEventType>();
 	}
 
-	constexpr static std::pair<const uint8_t, const uint8_t> getRotaryPins() { return {Pin1, Pin2 }; }
+	constexpr static std::pair<const uint8_t, const uint8_t> getRotaryPins() { return { Pin1, Pin2 }; }
 	constexpr static uint8_t getButtonPin() { return ButtonPin; }
 
-///	const uint8_t pin1, pin2;
+protected:
+	static uint16_t getStepsFromSpeed(uint16_t spd) {
+		return
+		(spd < 25) 	? 	1 :
+		(spd < 50) 	? 	2 :
+		(spd < 75) 	? 	5 :
+		(spd < 100) ? 	10 :
+		(spd < 125) ? 	25 :
+		(spd < 150) ? 	50 :
+						100; 
+	}
 
 private:
 	RotaryEncoderEncoderGPIO<Pin1> p1;
 	RotaryEncoderEncoderGPIO<Pin2> p2; 
 	PushButton<ButtonPin> button;
 	uint8_t state;
+	EncoderClickTimer timer;
+
 	void triggered(uint gpio, uint32_t events);
 };
 
@@ -311,7 +372,6 @@ void PushButtonGPIO<Pin>::triggered(uint gpio, uint32_t events) {
 
 
 
-
 // PushButton
 
 template<uint8_t Pin>
@@ -366,10 +426,8 @@ void RotaryEncoderEncoderGPIO<Pin>::triggered(uint gpio, uint32_t events) {
 
 
 
-
-
-namespace {
 // RotaryEncoder
+namespace {
 
 constexpr uint8_t DIR_NONE		{ 0x00 };
 constexpr uint8_t DIR_CW		{ 0x10 };
@@ -400,9 +458,10 @@ const std::array<std::array<uint8_t, 4>, 7> ttable {
     std::array<uint8_t, 4>{ R_CCW_NEXT, R_CCW_FINAL, R_START, R_START | DIR_CCW },
   // R_CCW_NEXT
     std::array<uint8_t, 4>{ R_CCW_NEXT, R_CCW_FINAL, R_CCW_BEGIN, R_START }
-};
 
-}
+};
+} // namespace ::
+
 
 template <uint8_t Pin1, uint8_t Pin2, uint8_t ButtonPin>
 RotaryEncoder<Pin1, Pin2, ButtonPin>::RotaryEncoder() : 
@@ -416,14 +475,25 @@ RotaryEncoder<Pin1, Pin2, ButtonPin>::RotaryEncoder() :
 template <uint8_t Pin1, uint8_t Pin2, uint8_t ButtonPin>
 void RotaryEncoder<Pin1, Pin2, ButtonPin>::triggered(uint gpio, uint32_t events) {
 
-	uint8_t pinstate = gpio_get(p1.getPin()) | (gpio_get(p2.getPin()) << 1);
+	const uint8_t pinstate = gpio_get(p1.getPin()) | (gpio_get(p2.getPin()) << 1);
 	state = ttable[state & 0xF][pinstate];
+	auto& dispatcher = Event::Dispatcher::get();
 
 	if ((state & 0x30) == DIR_CW) {
-		Event::Dispatcher::get().dispatch( std::make_unique<Event::EncoderClockwise<Pin1, Pin2>>() );
+
+		timer.addClick(Action::ROTARY_ENCODER_CLOCKWISE_TICK);
+		const auto encoderSpeed = timer.getClicksPerSecond();
+		const auto clicks = getStepsFromSpeed(encoderSpeed);
+		
+		dispatcher.dispatch( std::make_unique<Event::EncoderClockwise<Pin1, Pin2>>(clicks) );
 
 	} else if ((state & 0x30) == DIR_CCW) {
-		Event::Dispatcher::get().dispatch( std::make_unique<Event::EncoderCounterClockwise<Pin1, Pin2>>() );
+
+		timer.addClick(Action::ROTARY_ENCODER_CLOCKWISE_TICK);
+		const auto encoderSpeed = timer.getClicksPerSecond();
+		const auto clicks = getStepsFromSpeed(encoderSpeed);
+
+		dispatcher.dispatch( std::make_unique<Event::EncoderCounterClockwise<Pin1, Pin2>>(clicks));
 	}
 }
 

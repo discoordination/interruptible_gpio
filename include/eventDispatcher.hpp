@@ -62,17 +62,17 @@ public:
 	/**
 	 * Drop the next event.
 	 */
-	inline void dropNext();
+	void dropNext();
 
 	/**
 	 * Suspend all event processing.  Events are ignored.
 	 */ 
-	inline void suspend();
+	void suspend();
 
 	/**
 	 * Resume from suspend.
 	 */
-	inline void resume();
+	void resume();
 
 private:
 	Dispatcher() : m_dropNext{false}, m_suspended{false} {}

@@ -191,20 +191,33 @@ public:
 
 
 
+# pragma MESSAGE "I don't think that i need this... not sure tho... Remove if unused."
+class BaseEncoder : public BaseEvent {	
+public:
+	BaseEncoder(const uint16_t steps) {}/// : steps{ steps } 
+	//uint16_t getSteps() { return steps; }
+protected:
+private:
+	//const uint16_t steps;
+};
+
+
+
 template<uint8_t Pin1, uint8_t Pin2>
-class Encoder : public BaseEvent {
+class Encoder : public BaseEncoder {
 
 	static_assert(Pin1 < Pin2, "Pin1 must always be less than Pin2 to avoid duplicate types.");
 
 public:
+	Encoder(const uint16_t steps) : BaseEncoder{ steps } {}
+
 	static constexpr std::pair<uint8_t, uint8_t> getPins() { return pins; } 
 
-	constexpr bool isButtonEvent() const override { return false; }
-	constexpr bool isEncoderEvent() const override { return true; }
+	bool isButtonEvent() const override { return false; }
+	bool isEncoderEvent() const override { return true; }
 
 	virtual bool isClockwise() const = 0;
 	virtual bool isCounterClockwise() const = 0;
-	
 
 #ifdef IG_DEBUG
 	std::ostream& print(std::ostream& os) const override;
@@ -223,6 +236,8 @@ template<const uint8_t Pin1, const uint8_t Pin2>
 class EncoderClockwise final : public Encoder<Pin1, Pin2> {
 
 public:
+	EncoderClockwise(const uint16_t steps) : Encoder<Pin1, Pin2>{ steps } {}
+
 	constexpr bool isClockwise() const override { return true; }
 	constexpr bool isCounterClockwise() const override { return false; }
 
@@ -240,6 +255,9 @@ class EncoderCounterClockwise final : public Encoder<Pin1, Pin2> {
 	static_assert((Pin1 < Pin2), "Pin1 must always be less than Pin2 to avoid duplicate types."); 
 
 public:
+
+	EncoderCounterClockwise(const uint16_t steps) : Encoder<Pin1, Pin2>{ steps } {}
+
 	constexpr bool isClockwise() const override { return false; }
 	constexpr bool isCounterClockwise() const override { return true; }
 
